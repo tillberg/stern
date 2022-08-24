@@ -21,13 +21,18 @@ import (
 	"hash/fnv"
 	"os"
 	"regexp"
+	"strings"
 	"text/template"
 
 	"github.com/fatih/color"
 	"github.com/pkg/errors"
 	corev1 "k8s.io/api/core/v1"
-	"k8s.io/client-go/kubernetes/typed/core/v1"
+	v1 "k8s.io/client-go/kubernetes/typed/core/v1"
 	"k8s.io/client-go/rest"
+)
+
+var (
+	rpcErrorNoSuchContainerBytes = "rpc error: code = Unknown desc = Error: No such container"
 )
 
 type Tail struct {
@@ -82,10 +87,10 @@ func determineColor(podName string) (podColor, containerColor *color.Color) {
 }
 
 // Start starts tailing
-func (t *Tail) Start(ctx context.Context, i v1.PodInterface) {
+func (t *Tail) Start(ctx context.Context, lines chan<- Line, i v1.PodInterface) {
 	t.podColor, t.containerColor = determineColor(t.PodName)
 
-	go func() {
+	go func(ctx context.Context) {
 		g := color.New(color.FgHiGreen, color.Bold).SprintFunc()
 		p := t.podColor.SprintFunc()
 		c := t.containerColor.SprintFunc()
@@ -103,7 +108,7 @@ func (t *Tail) Start(ctx context.Context, i v1.PodInterface) {
 			TailLines:    t.Options.TailLines,
 		})
 
-		stream, err := req.Stream()
+		stream, err := req.Stream(ctx)
 		if err != nil {
 			fmt.Println(errors.Wrapf(err, "Error opening stream to %s/%s: %s\n", t.Namespace, t.PodName, t.ContainerName))
 			return
@@ -115,21 +120,28 @@ func (t *Tail) Start(ctx context.Context, i v1.PodInterface) {
 			stream.Close()
 		}()
 
-		reader := bufio.NewReader(stream)
+		var containerPrefix string
+		containerPrefix = t.containerColor.Sprint(fmt.Sprintf("% 10s", t.ContainerName))
 
-	OUTER:
-		for {
-			line, err := reader.ReadBytes('\n')
-			if err != nil {
-				return
+		scanner := bufio.NewScanner(stream)
+		scanner.Split(bufio.ScanLines)
+		for scanner.Scan() {
+			line := scanner.Text()
+			if strings.HasPrefix(line, rpcErrorNoSuchContainerBytes) {
+				continue
 			}
 
 			str := string(line)
 
+			exclude := false
 			for _, rex := range t.Options.Exclude {
 				if rex.MatchString(str) {
-					continue OUTER
+					exclude = true
+					break
 				}
+			}
+			if exclude {
+				continue
 			}
 
 			if len(t.Options.Include) != 0 {
@@ -140,14 +152,24 @@ func (t *Tail) Start(ctx context.Context, i v1.PodInterface) {
 						break
 					}
 				}
- 				if !matches {
-					continue OUTER
+				if !matches {
+					continue
 				}
 			}
 
-			t.Print(str)
+			lines <- Line{Prefix: containerPrefix, Msg: str}
 		}
-	}()
+		err = scanner.Err()
+		if err != nil {
+			errStr := err.Error()
+			switch {
+			case strings.Contains(errStr, "response body closed"):
+			default:
+				fmt.Println(errors.Wrapf(err, "Error reading stream for %s/%s: %s\n", t.Namespace, t.PodName, t.ContainerName))
+			}
+			return
+		}
+	}(ctx)
 
 	go func() {
 		<-ctx.Done()
@@ -165,39 +187,4 @@ func (t *Tail) Close() {
 		fmt.Fprintf(os.Stderr, "%s %s\n", r("-"), p(t.PodName))
 	}
 	close(t.closed)
-}
-
-// Print prints a color coded log message with the pod and container names
-func (t *Tail) Print(msg string) {
-	vm := Log{
-		Message:        msg,
-		Namespace:      t.Namespace,
-		PodName:        t.PodName,
-		ContainerName:  t.ContainerName,
-		PodColor:       t.podColor,
-		ContainerColor: t.containerColor,
-	}
-	err := t.tmpl.Execute(os.Stdout, vm)
-	if err != nil {
-		os.Stderr.WriteString(fmt.Sprintf("expanding template failed: %s", err))
-	}
-}
-
-// Log is the object which will be used together with the template to generate
-// the output.
-type Log struct {
-	// Message is the log message itself
-	Message string `json:"message"`
-
-	// Namespace of the pod
-	Namespace string `json:"namespace"`
-
-	// PodName of the pod
-	PodName string `json:"podName"`
-
-	// ContainerName of the container
-	ContainerName string `json:"containerName"`
-
-	PodColor       *color.Color `json:"-"`
-	ContainerColor *color.Color `json:"-"`
 }

@@ -25,20 +25,19 @@ import (
 	"text/template"
 	"time"
 
-	"k8s.io/apimachinery/pkg/labels"
-
+	"github.com/fatih/color"
 	homedir "github.com/mitchellh/go-homedir"
 	"github.com/pkg/errors"
 	"github.com/spf13/cobra"
-	"github.com/wercker/stern/stern"
-
-	"github.com/fatih/color"
+	"github.com/tillberg/stern/stern"
+	"k8s.io/apimachinery/pkg/labels"
 )
 
 const version = "1.11.0"
 
 type Options struct {
-	container        string
+	container string
+
 	excludeContainer string
 	containerState   string
 	timestamps       bool

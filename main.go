@@ -14,8 +14,12 @@
 
 package main
 
-import "github.com/wercker/stern/cmd"
+import (
+	"github.com/tillberg/autorestart"
+	"github.com/tillberg/stern/cmd"
+)
 
 func main() {
+	go autorestart.RestartOnChange()
 	cmd.Run()
 }

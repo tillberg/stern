@@ -16,9 +16,11 @@ package stern
 
 import (
 	"context"
+	"sort"
+	"time"
 
 	"github.com/pkg/errors"
-	"github.com/wercker/stern/kubernetes"
+	"github.com/tillberg/stern/kubernetes"
 )
 
 // Run starts the main run loop
@@ -43,17 +45,46 @@ func Run(ctx context.Context, config *Config) error {
 		}
 	}
 
-	added, removed, err := Watch(ctx, clientset.Core().Pods(namespace), config.PodQuery, config.ContainerQuery, config.ExcludeContainerQuery, config.ContainerState, config.LabelSelector)
+	added, removed, err := Watch(ctx, clientset.CoreV1().Pods(namespace), config.PodQuery, config.ContainerQuery, config.ExcludeContainerQuery, config.ContainerState, config.LabelSelector)
 	if err != nil {
 		return errors.Wrap(err, "failed to set up watch")
 	}
 
 	tails := make(map[string]*Tail)
+	lines := make(chan Line, 100)
+
+	go func() {
+		startupDelayTime := time.Now().Add(1 * time.Second)
+		startupDelayTimer := time.After(1 * time.Second)
+		var startupLines LineSlice
+	startupLoop:
+		for {
+			select {
+			case line := <-lines:
+				startupLines = append(startupLines, line)
+				if time.Now().Add(200 * time.Millisecond).After(startupDelayTime) {
+					startupDelayTime = time.Now().Add(250 * time.Millisecond)
+					startupDelayTimer = time.After(250 * time.Millisecond)
+				}
+			case <-startupDelayTimer:
+				break startupLoop
+			}
+		}
+		sort.Stable(startupLines)
+		for _, line := range startupLines {
+			line.Print()
+		}
+		startupLines = nil
+		for line := range lines {
+			line.Print()
+		}
+	}()
 
 	go func() {
 		for p := range added {
 			id := p.GetID()
 			if tails[id] != nil {
+				// alog.Printf("Added container %q already exists, ignoring\n", id)
 				continue
 			}
 
@@ -67,7 +98,7 @@ func Run(ctx context.Context, config *Config) error {
 			})
 			tails[id] = tail
 
-			tail.Start(ctx, clientset.Core().Pods(p.Namespace))
+			tail.Start(ctx, lines, clientset.CoreV1().Pods(p.Namespace))
 		}
 	}()
 
@@ -75,6 +106,7 @@ func Run(ctx context.Context, config *Config) error {
 		for p := range removed {
 			id := p.GetID()
 			if tails[id] == nil {
+				// alog.Printf("Removed container %q does not exist, ignoring\n", id)
 				continue
 			}
 			tails[id].Close()

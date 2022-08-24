@@ -18,14 +18,15 @@ import (
 	"context"
 	"fmt"
 	"regexp"
+	"time"
 
-	"github.com/pkg/errors"
+	"github.com/tillberg/alog"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/watch"
-	"k8s.io/client-go/kubernetes/typed/core/v1"
+	v1 "k8s.io/client-go/kubernetes/typed/core/v1"
 )
 
 // Target is a target to watch
@@ -44,24 +45,39 @@ func (t *Target) GetID() string {
 // containers/pods. The first result is targets added, the second is targets
 // removed
 func Watch(ctx context.Context, i v1.PodInterface, podFilter *regexp.Regexp, containerFilter *regexp.Regexp, containerExcludeFilter *regexp.Regexp, containerState ContainerState, labelSelector labels.Selector) (chan *Target, chan *Target, error) {
-	watcher, err := i.Watch(metav1.ListOptions{Watch: true, LabelSelector: labelSelector.String()})
-	if err != nil {
-		return nil, nil, errors.Wrap(err, "failed to set up watch")
-	}
-
 	added := make(chan *Target)
 	removed := make(chan *Target)
 
-	go func() {
+	var doWatch func(ctx context.Context)
+	doWatch = func(ctx context.Context) {
+		defer func() {
+			time.Sleep(10 * time.Second)
+			alog.Printf("@(dim:Restarting watcher...)\n")
+			go doWatch(ctx)
+		}()
+		watcher, err := i.Watch(ctx, metav1.ListOptions{Watch: true, LabelSelector: labelSelector.String()})
+		if err != nil {
+			alog.Printf("failed to set up watch: %v\n", err)
+			return
+		}
+
 		for {
 			select {
-			case e := <-watcher.ResultChan():
-				if e.Object == nil {
+			case e, ok := <-watcher.ResultChan():
+				if !ok {
 					// Closed because of error
+					// alog.Printf("@(error:Watch exiting due to error)\n")
 					return
 				}
 
-				pod := e.Object.(*corev1.Pod)
+				var pod *corev1.Pod
+				switch v := e.Object.(type) {
+				case *corev1.Pod:
+					pod = v
+				default:
+					alog.Info("watcher result is unexpected type %T", e.Object)
+					continue
+				}
 
 				if !podFilter.MatchString(pod.Name) {
 					continue
@@ -108,6 +124,8 @@ func Watch(ctx context.Context, i v1.PodInterface, podFilter *regexp.Regexp, con
 							Container: c.Name,
 						}
 					}
+				default:
+					alog.Printf("Ignoring unexpected watch event %s: %v\n", e.Type, e.Object)
 				}
 			case <-ctx.Done():
 				watcher.Stop()
@@ -116,7 +134,9 @@ func Watch(ctx context.Context, i v1.PodInterface, podFilter *regexp.Regexp, con
 				return
 			}
 		}
-	}()
+	}
+
+	go doWatch(ctx)
 
 	return added, removed, nil
 }

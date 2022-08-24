@@ -1,5 +1,8 @@
 # stern
 
+**** this is a custom-modified version of https://github.com/wercker/stern; you probably want that instead ****
+
+
 [![wercker status](https://app.wercker.com/status/fb1ed340ffed75c22dc301c38ab0893c/s/master "wercker status")](https://app.wercker.com/project/byKey/fb1ed340ffed75c22dc301c38ab0893c)
 
 Stern allows you to `tail` multiple pods on Kubernetes and multiple containers
