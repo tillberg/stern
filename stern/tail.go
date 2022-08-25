@@ -18,16 +18,19 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"hash/fnv"
 	"io"
 	"regexp"
+	"strconv"
 	"strings"
 	"text/template"
 	"time"
 
 	"github.com/fatih/color"
+	"github.com/tillberg/alog"
 	corev1 "k8s.io/api/core/v1"
 	corev1client "k8s.io/client-go/kubernetes/typed/core/v1"
 	"k8s.io/client-go/rest"
@@ -106,7 +109,7 @@ func (o TailOptions) UpdateTimezoneIfNeeded(message string) (string, error) {
 		return message, errors.New("missing timestamp")
 	}
 
-	return t.In(o.Location).Format("2006-01-02T15:04:05.000000000Z07:00") + message[idx:], nil
+	return t.In(o.Location).Format("2006-01-02T15:04:05Z") + message[idx:], nil
 }
 
 // NewTail returns a new tail for a Kubernetes container inside a pod
@@ -221,7 +224,7 @@ func (t *Tail) ConsumeRequest(ctx context.Context, request rest.ResponseWrapper)
 				t.Print(fmt.Sprintf("[%v] %s", err, msg))
 				continue
 			}
-
+			msg = reformatJSON(msg)
 			t.Print(msg)
 		}
 
@@ -230,6 +233,99 @@ func (t *Tail) ConsumeRequest(ctx context.Context, request rest.ResponseWrapper)
 				return err
 			}
 			return nil
+		}
+	}
+}
+
+type jsonValueType int
+
+const (
+	jsonValueTypeMapKey jsonValueType = iota
+	jsonValueTypeMapValue
+	jsonValueTypeArrayFirst
+	jsonValueTypeArrayMore
+)
+
+var fieldNameFormatStr = alog.Colorify(" @(cyan,bold:%s)@(dim::)")
+
+func reformatJSON(msg string) string {
+	var depth int
+	var timeStr string
+	var nestedMsg bytes.Buffer
+	var newMsg bytes.Buffer
+	var nextValueTypes []jsonValueType
+	var currentTopLevelKey string
+	d := json.NewDecoder(strings.NewReader(msg))
+	for {
+		token, err := d.Token()
+		if err != nil {
+			if err == io.EOF {
+				return strings.TrimSpace(timeStr + newMsg.String())
+			}
+			alog.Printf("error decoding json: %v\n", err)
+			return msg
+		}
+		var valueStr string
+		if t, ok := token.(json.Delim); ok { // the four JSON delimiters [ ] { }
+			nestedMsg.WriteRune(rune(t))
+			switch t {
+			case '[':
+				depth++
+				nextValueTypes = append(nextValueTypes, jsonValueTypeArrayFirst)
+			case ']':
+				depth--
+				nextValueTypes = nextValueTypes[:len(nextValueTypes)-1]
+			case '{':
+				depth++
+				nextValueTypes = append(nextValueTypes, jsonValueTypeMapKey)
+			case '}':
+				depth--
+				nextValueTypes = nextValueTypes[:len(nextValueTypes)-1]
+			}
+			if (t == ']' || t == '}') && depth == 1 {
+				newMsg.Write(nestedMsg.Bytes())
+				nestedMsg.Reset()
+			}
+			continue
+		}
+		var nextValueType = nextValueTypes[len(nextValueTypes)-1]
+		switch t := token.(type) {
+		case bool: // JSON booleans
+			valueStr = strconv.FormatBool(t)
+		case float64: // JSON numbers
+			valueStr = strconv.FormatFloat(t, 'g', -1, 64)
+		case json.Number: // JSON numbers
+			valueStr = t.String()
+		case string: // JSON string literals
+			valueStr = t
+		case nil: // JSON null
+			valueStr = "null"
+		}
+		switch nextValueType {
+		case jsonValueTypeMapKey:
+			if depth == 1 {
+				currentTopLevelKey = valueStr
+			}
+			if currentTopLevelKey != "time" {
+				fmt.Fprintf(&newMsg, fieldNameFormatStr, valueStr)
+			}
+			nextValueTypes[len(nextValueTypes)-1] = jsonValueTypeMapValue
+		case jsonValueTypeMapValue:
+			if currentTopLevelKey == "time" {
+				// Reformat unix time as a human-readable string:
+				if unixTimeSecs, err := strconv.ParseInt(valueStr, 10, 64); err == nil {
+					valueStr = time.Unix(unixTimeSecs, 0).Format("2006-01-02T15:04:05Z")
+				}
+				timeStr = " " + valueStr
+			} else {
+				fmt.Fprintf(&newMsg, " %s", valueStr)
+			}
+			nextValueTypes[len(nextValueTypes)-1] = jsonValueTypeMapKey
+		case jsonValueTypeArrayFirst:
+			fmt.Fprintf(&nestedMsg, "%s", valueStr)
+			nextValueTypes[len(nextValueTypes)-1] = jsonValueTypeArrayMore
+		case jsonValueTypeArrayMore:
+			fmt.Fprintf(&nestedMsg, ", %s", valueStr)
 		}
 	}
 }
