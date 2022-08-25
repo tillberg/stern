@@ -21,21 +21,23 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
 
-	// auth providers
-	_ "k8s.io/client-go/plugin/pkg/client/auth/azure"
-	_ "k8s.io/client-go/plugin/pkg/client/auth/gcp"
-	_ "k8s.io/client-go/plugin/pkg/client/auth/oidc"
+	// load all auth plugins
+	_ "k8s.io/client-go/plugin/pkg/client/auth"
 )
 
 // NewClientConfig returns a new Kubernetes client config set for a context
 func NewClientConfig(configPath string, contextName string) clientcmd.ClientConfig {
-	configPathList := filepath.SplitList(configPath)
-	configLoadingRules := &clientcmd.ClientConfigLoadingRules{}
-	if len(configPathList) <= 1 {
-		configLoadingRules.ExplicitPath = configPath
-	} else {
-		configLoadingRules.Precedence = configPathList
+	configLoadingRules := clientcmd.NewDefaultClientConfigLoadingRules()
+
+	if configPath != "" {
+		configPathList := filepath.SplitList(configPath)
+		if len(configPathList) <= 1 {
+			configLoadingRules.ExplicitPath = configPath
+		} else {
+			configLoadingRules.Precedence = configPathList
+		}
 	}
+
 	return clientcmd.NewNonInteractiveDeferredLoadingClientConfig(
 		configLoadingRules,
 		&clientcmd.ConfigOverrides{

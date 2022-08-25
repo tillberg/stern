@@ -15,10 +15,12 @@
 package stern
 
 import (
+	"io"
 	"regexp"
 	"text/template"
 	"time"
 
+	"k8s.io/apimachinery/pkg/fields"
 	"k8s.io/apimachinery/pkg/labels"
 )
 
@@ -26,17 +28,26 @@ import (
 type Config struct {
 	KubeConfig            string
 	ContextName           string
-	Namespace             string
+	Namespaces            []string
 	PodQuery              *regexp.Regexp
+	ExcludePodQuery       *regexp.Regexp
 	Timestamps            bool
+	Location              *time.Location
 	ContainerQuery        *regexp.Regexp
 	ExcludeContainerQuery *regexp.Regexp
-	ContainerState        ContainerState
+	ContainerStates       []ContainerState
 	Exclude               []*regexp.Regexp
 	Include               []*regexp.Regexp
+	InitContainers        bool
+	EphemeralContainers   bool
 	Since                 time.Duration
 	AllNamespaces         bool
 	LabelSelector         labels.Selector
+	FieldSelector         fields.Selector
 	TailLines             *int64
 	Template              *template.Template
+	Follow                bool
+
+	Out    io.Writer
+	ErrOut io.Writer
 }

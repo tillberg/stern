@@ -16,18 +16,20 @@ package stern
 
 import (
 	"bufio"
+	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"hash/fnv"
-	"os"
+	"io"
 	"regexp"
 	"strings"
 	"text/template"
+	"time"
 
 	"github.com/fatih/color"
-	"github.com/pkg/errors"
 	corev1 "k8s.io/api/core/v1"
-	v1 "k8s.io/client-go/kubernetes/typed/core/v1"
+	corev1client "k8s.io/client-go/kubernetes/typed/core/v1"
 	"k8s.io/client-go/rest"
 )
 
@@ -36,35 +38,91 @@ var (
 )
 
 type Tail struct {
+	clientset corev1client.CoreV1Interface
+
+	NodeName       string
 	Namespace      string
 	PodName        string
 	ContainerName  string
 	Options        *TailOptions
-	req            *rest.Request
 	closed         chan struct{}
 	podColor       *color.Color
 	containerColor *color.Color
 	tmpl           *template.Template
+	active         bool
+	out            io.Writer
+	errOut         io.Writer
 }
 
 type TailOptions struct {
-	Timestamps   bool
+	Timestamps bool
+	Location   *time.Location
+
 	SinceSeconds int64
 	Exclude      []*regexp.Regexp
 	Include      []*regexp.Regexp
 	Namespace    bool
 	TailLines    *int64
+	Follow       bool
+}
+
+func (o TailOptions) IsExclude(msg string) bool {
+	for _, rex := range o.Exclude {
+		if rex.MatchString(msg) {
+			return true
+		}
+	}
+
+	return false
+}
+
+func (o TailOptions) IsInclude(msg string) bool {
+	if len(o.Include) == 0 {
+		return true
+	}
+
+	for _, rin := range o.Include {
+		if rin.MatchString(msg) {
+			return true
+		}
+	}
+
+	return false
+}
+
+func (o TailOptions) UpdateTimezoneIfNeeded(message string) (string, error) {
+	if !o.Timestamps {
+		return message, nil
+	}
+
+	idx := strings.IndexRune(message, ' ')
+	if idx == -1 {
+		return message, errors.New("missing timestamp")
+	}
+
+	datetime := message[:idx]
+	t, err := time.ParseInLocation(time.RFC3339Nano, datetime, time.UTC)
+	if err != nil {
+		return message, errors.New("missing timestamp")
+	}
+
+	return t.In(o.Location).Format("2006-01-02T15:04:05.000000000Z07:00") + message[idx:], nil
 }
 
 // NewTail returns a new tail for a Kubernetes container inside a pod
-func NewTail(namespace, podName, containerName string, tmpl *template.Template, options *TailOptions) *Tail {
+func NewTail(clientset corev1client.CoreV1Interface, nodeName, namespace, podName, containerName string, tmpl *template.Template, out, errOut io.Writer, options *TailOptions) *Tail {
 	return &Tail{
+		clientset:     clientset,
+		NodeName:      nodeName,
 		Namespace:     namespace,
 		PodName:       podName,
 		ContainerName: containerName,
 		Options:       options,
 		closed:        make(chan struct{}),
 		tmpl:          tmpl,
+		active:        true,
+		out:           out,
+		errOut:        errOut,
 	}
 }
 
@@ -79,7 +137,7 @@ var colorList = [][2]*color.Color{
 
 func determineColor(podName string) (podColor, containerColor *color.Color) {
 	hash := fnv.New32()
-	hash.Write([]byte(podName))
+	_, _ = hash.Write([]byte(podName))
 	idx := hash.Sum32() % uint32(len(colorList))
 
 	colors := colorList[idx]
@@ -87,104 +145,139 @@ func determineColor(podName string) (podColor, containerColor *color.Color) {
 }
 
 // Start starts tailing
-func (t *Tail) Start(ctx context.Context, lines chan<- Line, i v1.PodInterface) {
+func (t *Tail) Start(ctx context.Context) error {
 	t.podColor, t.containerColor = determineColor(t.PodName)
 
-	go func(ctx context.Context) {
-		g := color.New(color.FgHiGreen, color.Bold).SprintFunc()
-		p := t.podColor.SprintFunc()
-		c := t.containerColor.SprintFunc()
-		if t.Options.Namespace {
-			fmt.Fprintf(os.Stderr, "%s %s %s › %s\n", g("+"), p(t.Namespace), p(t.PodName), c(t.ContainerName))
-		} else {
-			fmt.Fprintf(os.Stderr, "%s %s › %s\n", g("+"), p(t.PodName), c(t.ContainerName))
-		}
-
-		req := i.GetLogs(t.PodName, &corev1.PodLogOptions{
-			Follow:       true,
-			Timestamps:   t.Options.Timestamps,
-			Container:    t.ContainerName,
-			SinceSeconds: &t.Options.SinceSeconds,
-			TailLines:    t.Options.TailLines,
-		})
-
-		stream, err := req.Stream(ctx)
-		if err != nil {
-			fmt.Println(errors.Wrapf(err, "Error opening stream to %s/%s: %s\n", t.Namespace, t.PodName, t.ContainerName))
-			return
-		}
-		defer stream.Close()
-
-		go func() {
-			<-t.closed
-			stream.Close()
-		}()
-
-		var containerPrefix string
-		containerPrefix = t.containerColor.Sprint(fmt.Sprintf("% 10s", t.ContainerName))
-
-		scanner := bufio.NewScanner(stream)
-		scanner.Split(bufio.ScanLines)
-		for scanner.Scan() {
-			line := scanner.Text()
-			if strings.HasPrefix(line, rpcErrorNoSuchContainerBytes) {
-				continue
-			}
-
-			str := string(line)
-
-			exclude := false
-			for _, rex := range t.Options.Exclude {
-				if rex.MatchString(str) {
-					exclude = true
-					break
-				}
-			}
-			if exclude {
-				continue
-			}
-
-			if len(t.Options.Include) != 0 {
-				matches := false
-				for _, rin := range t.Options.Include {
-					if rin.MatchString(str) {
-						matches = true
-						break
-					}
-				}
-				if !matches {
-					continue
-				}
-			}
-
-			lines <- Line{Prefix: containerPrefix, Msg: str}
-		}
-		err = scanner.Err()
-		if err != nil {
-			errStr := err.Error()
-			switch {
-			case strings.Contains(errStr, "response body closed"):
-			default:
-				fmt.Println(errors.Wrapf(err, "Error reading stream for %s/%s: %s\n", t.Namespace, t.PodName, t.ContainerName))
-			}
-			return
-		}
-	}(ctx)
-
+	ctx, cancel := context.WithCancel(ctx)
 	go func() {
-		<-ctx.Done()
-		close(t.closed)
+		<-t.closed
+		cancel()
 	}()
+
+	g := color.New(color.FgHiGreen, color.Bold).SprintFunc()
+	p := t.podColor.SprintFunc()
+	c := t.containerColor.SprintFunc()
+	if t.Options.Namespace {
+		fmt.Fprintf(t.errOut, "%s %s %s › %s\n", g("+"), p(t.Namespace), p(t.PodName), c(t.ContainerName))
+	} else {
+		fmt.Fprintf(t.errOut, "%s %s › %s\n", g("+"), p(t.PodName), c(t.ContainerName))
+	}
+
+	req := t.clientset.Pods(t.Namespace).GetLogs(t.PodName, &corev1.PodLogOptions{
+		Follow:       t.Options.Follow,
+		Timestamps:   t.Options.Timestamps,
+		Container:    t.ContainerName,
+		SinceSeconds: &t.Options.SinceSeconds,
+		TailLines:    t.Options.TailLines,
+	})
+
+	err := t.ConsumeRequest(ctx, req)
+	t.active = false
+
+	if errors.Is(err, context.Canceled) {
+		return nil
+	}
+
+	return err
 }
 
 // Close stops tailing
 func (t *Tail) Close() {
 	r := color.New(color.FgHiRed, color.Bold).SprintFunc()
 	p := t.podColor.SprintFunc()
+	c := t.containerColor.SprintFunc()
 	if t.Options.Namespace {
-		fmt.Fprintf(os.Stderr, "%s %s %s\n", r("-"), p(t.Namespace), p(t.PodName))
+		fmt.Fprintf(t.errOut, "%s %s %s › %s\n", r("-"), p(t.Namespace), p(t.PodName), c(t.ContainerName))
 	} else {
-		fmt.Fprintf(os.Stderr, "%s %s\n", r("-"), p(t.PodName))
+		fmt.Fprintf(t.errOut, "%s %s › %s\n", r("-"), p(t.PodName), c(t.ContainerName))
 	}
+
 	close(t.closed)
+}
+
+// ConsumeRequest reads the data from request and writes into the out
+// writer.
+func (t *Tail) ConsumeRequest(ctx context.Context, request rest.ResponseWrapper) error {
+	stream, err := request.Stream(ctx)
+	if err != nil {
+		return err
+	}
+	defer stream.Close()
+
+	r := bufio.NewReader(stream)
+	for {
+		line, err := r.ReadBytes('\n')
+		if len(line) != 0 {
+			msg := string(line)
+			// Remove a line break
+			msg = strings.TrimSuffix(msg, "\n")
+
+			if t.Options.IsExclude(msg) || !t.Options.IsInclude(msg) {
+				continue
+			}
+
+			msg, err := t.Options.UpdateTimezoneIfNeeded(msg)
+			if err != nil {
+				t.Print(fmt.Sprintf("[%v] %s", err, msg))
+				continue
+			}
+
+			t.Print(msg)
+		}
+
+		if err != nil {
+			if err != io.EOF {
+				return err
+			}
+			return nil
+		}
+	}
+}
+
+// Print prints a color coded log message with the pod and container names
+func (t *Tail) Print(msg string) {
+	vm := Log{
+		Message:        msg,
+		NodeName:       t.NodeName,
+		Namespace:      t.Namespace,
+		PodName:        t.PodName,
+		ContainerName:  t.ContainerName,
+		PodColor:       t.podColor,
+		ContainerColor: t.containerColor,
+	}
+
+	var buf bytes.Buffer
+	if err := t.tmpl.Execute(&buf, vm); err != nil {
+		fmt.Fprintf(t.errOut, "expanding template failed: %s\n", err)
+		return
+	}
+
+	fmt.Fprint(t.out, buf.String())
+}
+
+// isActive returns false if the log stream is closed.
+func (t *Tail) isActive() bool {
+	return t.active
+}
+
+// Log is the object which will be used together with the template to generate
+// the output.
+type Log struct {
+	// Message is the log message itself
+	Message string `json:"message"`
+
+	// Node name of the pod
+	NodeName string `json:"nodeName"`
+
+	// Namespace of the pod
+	Namespace string `json:"namespace"`
+
+	// PodName of the pod
+	PodName string `json:"podName"`
+
+	// ContainerName of the container
+	ContainerName string `json:"containerName"`
+
+	PodColor       *color.Color `json:"-"`
+	ContainerColor *color.Color `json:"-"`
 }

@@ -1,9 +1,9 @@
+[![Build](https://github.com/stern/stern/workflows/CI/badge.svg)](https://github.com/stern/stern/actions?query=workflow%3ACI+branch%3Amaster)
 # stern
 
-**** this is a custom-modified version of https://github.com/wercker/stern; you probably want that instead ****
+**** this is a custom-modified version of https://github.com/stern/stern; you probably want that instead ****
 
-
-[![wercker status](https://app.wercker.com/status/fb1ed340ffed75c22dc301c38ab0893c/s/master "wercker status")](https://app.wercker.com/project/byKey/fb1ed340ffed75c22dc301c38ab0893c)
+*Fork of discontinued [wercker/stern](https://github.com/wercker/stern)*
 
 Stern allows you to `tail` multiple pods on Kubernetes and multiple containers
 within the pod. Each result is color coded for quicker debugging.
@@ -19,23 +19,36 @@ limit what containers to show. By default all containers are listened to.
 
 ## Installation
 
-If you don't want to build from source go grab a [binary release](https://github.com/wercker/stern/releases)
+### Download binary
 
-[Govendor](https://github.com/kardianos/govendor) is required to install vendored dependencies.
+Download a [binary release](https://github.com/stern/stern/releases)
+
+### Build from source
 
 ```
-mkdir -p $GOPATH/src/github.com/wercker
-cd $GOPATH/src/github.com/wercker
-git clone https://github.com/wercker/stern.git && cd stern
-govendor sync
-go install
+go install github.com/stern/stern@latest
 ```
 
-### Homebrew
+### asdf (Linux/macOS)
 
-On macOS, you can also install Stern using [Homebrew](https://brew.sh/):
+If you use [asdf](https://asdf-vm.com/), you can install like this:
+```
+asdf plugin-add stern
+asdf install stern latest
+```
+
+### Homebrew (Linux/macOS)
+
+If you use [Homebrew](https://brew.sh), you can install like this:
 ```
 brew install stern
+```
+
+### Krew (Linux/macOS/Windows)
+
+If you use [Krew](https://krew.sigs.k8s.io/) which is the package manager for kubectl plugins, you can install like this:
+```
+kubectl krew install stern
 ```
 
 ## Usage
@@ -49,23 +62,34 @@ The `pod` query is a regular expression so you could provide `"web-\w"` to tail
 
 ### cli flags
 
-| flag                 | default          | purpose                                                                                                      |
-|----------------------|------------------|--------------------------------------------------------------------------------------------------------------|
-| `--container`        | `.*`             | Container name when multiple containers in pod (regular expression)                                          |
-| `--exclude-container`|                  | Container name to exclude when multiple containers in pod (regular expression)                               |
-| `--container-state`  | `running`        | Tail containers with status in running, waiting or terminated. Default to running.                           |
-| `--timestamps`       |                  | Print timestamps                                                                                             |
-| `--since`            |                  | Return logs newer than a relative duration like 52, 2m, or 3h. Displays all if omitted                       |
-| `--context`          |                  | Kubernetes context to use. Default to `kubectl config current-context`                                       |
-| `--exclude`          |                  | Log lines to exclude; specify multiple with additional `--exclude`; (regular expression)                     |
-| `--namespace`        |                  | Kubernetes namespace to use. Default to namespace configured in Kubernetes context                           |
-| `--kubeconfig`       | `~/.kube/config` | Path to kubeconfig file to use                                                                               |
-| `--all-namespaces`   |                  | If present, tail across all namespaces. A specific namespace is ignored even if specified with --namespace.  |
-| `--selector`         |                  | Selector (label query) to filter on. If present, default to `.*` for the pod-query.                          |
-| `--tail`             | `-1`             | The number of lines from the end of the logs to show. Defaults to -1, showing all logs.                      |
-| `--color`            | `auto`           | Force set color output. `auto`: colorize if tty attached, `always`: always colorize, `never`: never colorize |
-| `--output`           | `default`        | Specify predefined template. Currently support: [default, raw, json] See templates section                   |
-| `template`           |                  | Template to use for log lines, leave empty to use --output flag                                              |
+<!-- auto generated cli flags begin --->
+ flag                        | default   | purpose
+-----------------------------|-----------|---------
+ `--all-namespaces`, `-A`    | `false`   | If present, tail across all namespaces. A specific namespace is ignored even if specified with --namespace.
+ `--color`                   | `auto`    | Force set color output. 'auto':  colorize if tty attached, 'always': always colorize, 'never': never colorize.
+ `--completion`              |           | Output stern command-line completion code for the specified shell. Can be 'bash', 'zsh' or 'fish'.
+ `--container`, `-c`         | `.*`      | Container name when multiple containers in pod. (regular expression)
+ `--container-state`         | `running` | Tail containers with state in running, waiting or terminated. To specify multiple states, repeat this or set comma-separated value.
+ `--context`                 |           | Kubernetes context to use. Default to current context configured in kubeconfig.
+ `--ephemeral-containers`    | `true`    | Include or exclude ephemeral containers.
+ `--exclude`, `-e`           |           | Log lines to exclude. (regular expression)
+ `--exclude-container`, `-E` |           | Container name to exclude when multiple containers in pod. (regular expression)
+ `--exclude-pod`             |           | Pod name to exclude. (regular expression)
+ `--field-selector`          |           | Selector (field query) to filter on. If present, default to ".*" for the pod-query.
+ `--include`, `-i`           |           | Log lines to include. (regular expression)
+ `--init-containers`         | `true`    | Include or exclude init containers.
+ `--kubeconfig`              |           | Path to kubeconfig file to use. Default to KUBECONFIG variable then ~/.kube/config path.
+ `--namespace`, `-n`         |           | Kubernetes namespace to use. Default to namespace configured in kubernetes context. To specify multiple namespaces, repeat this or set comma-separated value.
+ `--output`, `-o`            | `default` | Specify predefined template. Currently support: [default, raw, json]
+ `--prompt`, `-p`            | `false`   | Toggle interactive prompt for selecting 'app.kubernetes.io/instance' label values.
+ `--selector`, `-l`          |           | Selector (label query) to filter on. If present, default to ".*" for the pod-query.
+ `--since`, `-s`             | `48h0m0s` | Return logs newer than a relative duration like 5s, 2m, or 3h.
+ `--tail`                    | `-1`      | The number of lines from the end of the logs to show. Defaults to -1, showing all logs.
+ `--template`                |           | Template to use for log lines, leave empty to use --output flag.
+ `--timestamps`, `-t`        | `false`   | Print timestamps.
+ `--timezone`                | `Local`   | Set timestamps to specific timezone.
+ `--version`, `-v`           | `false`   | Print the version and exit.
+<!-- auto generated cli flags end --->
 
 See `stern --help` for details
 
@@ -88,21 +112,22 @@ It accepts a custom template through the `--template` flag, which will be
 compiled to a Go template and then used for every log message. This Go template
 will receive the following struct:
 
-| property        | type   | description               |
-|-----------------|--------|---------------------------|
-| `Message`       | string | The log message itself    |
-| `Namespace`     | string | The namespace of the pod  |
-| `PodName`       | string | The name of the pod       |
-| `ContainerName` | string | The name of the container |
+| property        | type   | description                                 |
+|-----------------|--------|---------------------------------------------|
+| `Message`       | string | The log message itself                      |
+| `NodeName`      | string | The node name where the pod is scheduled on |
+| `Namespace`     | string | The namespace of the pod                    |
+| `PodName`       | string | The name of the pod                         |
+| `ContainerName` | string | The name of the container                   |
 
 The following functions are available within the template (besides the [builtin
 functions](https://golang.org/pkg/text/template/#hdr-Functions)):
 
-| func    | arguments             | description                                                     |
-|---------|-----------------------|-----------------------------------------------------------------|
-| `json`  | `object`              | Marshal the object and output it as a json text                 |
-| `color` | `color.Color, string` | Wrap the text in color (.ContainerColor and .PodColor provided) |
-
+| func        | arguments             | description                                                     |
+|-------------|-----------------------|-----------------------------------------------------------------|
+| `json`      | `object`              | Marshal the object and output it as a json text                 |
+| `color`     | `color.Color, string` | Wrap the text in color (.ContainerColor and .PodColor provided) |
+| `parseJSON` | `string`              | Parse string as JSON                                            |
 
 
 ## Examples:
@@ -117,9 +142,19 @@ Tail the `staging` namespace excluding logs from `istio-proxy` container
 stern -n staging --exclude-container istio-proxy .
 ```
 
+Tail the `kube-system` namespace excluding logs from `kube-apiserver` pod
+```
+stern -n kube-system --exclude-pod kube-apiserver .
+```
+
 Show auth activity from 15min ago with timestamps
 ```
 stern auth -t --since 15m
+```
+
+Show auth activity with timestamps in specific timezone (default is your local timezone)
+```
+stern auth -t --timezone Asia/Tokyo
 ```
 
 Follow the development of `some-new-feature` in minikube
@@ -142,6 +177,11 @@ Follow the `frontend` pods in canary release
 stern frontend --selector release=canary
 ```
 
+Tail the pods on `kind-control-plane` node across all namespaces
+```
+stern --all-namespaces --field-selector spec.nodeName=kind-control-plane
+```
+
 Pipe the log message to jq:
 ```
 stern backend -o json | jq .
@@ -155,19 +195,31 @@ stern backend -o raw
 Output using a custom template:
 
 ```
-stern --template '{{.Message}} ({{.Namespace}}/{{.PodName}}/{{.ContainerName}})' backend
+stern --template '{{printf "%s (%s/%s/%s/%s)\n" .Message .NodeName .Namespace .PodName .ContainerName}}' backend
 ```
 
 Output using a custom template with stern-provided colors:
 
 ```
-stern --template '{{.Message}} ({{.Namespace}}/{{color .PodColor .PodName}}/{{color .ContainerColor .ContainerName}})' backend
+stern --template '{{.Message}} ({{.Namespace}}/{{color .PodColor .PodName}}/{{color .ContainerColor .ContainerName}}){{"\n"}}' backend
+```
+
+Output using a custom template with `parseJSON`:
+
+```
+stern . --template='{{.PodName}}/{{.ContainerName}} {{with $d := .Message | parseJSON}}[{{$d.level}}] {{$d.message}}{{end}}{{"\n"}}' backend
+```
+
+Trigger the interactive prompt to select an 'app.kubernetes.io/instance' label value:
+
+```
+stern -p
 ```
 
 ## Completion
 
-Stern supports command-line auto completion for bash or zsh. `stern
---completion=(bash|zsh)` outputs the shell completion code which work by being
+Stern supports command-line auto completion for bash, zsh or fish. `stern
+--completion=(bash|zsh|fish)` outputs the shell completion code which work by being
 evaluated in `.bashrc`, etc for the specified shell. In addition, Stern
 supports dynamic completion for `--namespace` and `--context`. In order to use
 that, kubectl must be installed on your environment.
@@ -177,14 +229,18 @@ If you use bash, stern bash completion code depends on the
 can install it with homebrew as follows:
 
 ```
-$ brew install bash-completion
+# If running Bash 3.2
+brew install bash-completion
+
+# or, if running Bash 4.1+
+brew install bash-completion@2
 ```
 
 Note that bash-completion must be sourced before sourcing the stern bash
 completion code in `.bashrc`.
 
 ```sh
-source <(brew --prefix)/etc/bash-completion
+source "$(brew --prefix)/etc/profile.d/bash_completion.sh"
 source <(stern --completion=bash)
 ```
 
@@ -194,7 +250,46 @@ If you use zsh, just source the stern zsh completion code in `.zshrc`.
 source <(stern --completion=zsh)
 ```
 
+if you use fish shell, just source the stern fish completion code.
+
+```sh
+stern --completion=fish | source
+
+# To load completions for each session, execute once:
+stern --completion=fish >~/.config/fish/completions/stern.fish
+```
+
+## Running with container
+
+You can also use stern using a container:
+
+```
+docker run ghcr.io/stern/stern --version
+```
+
+If you are using a minikube cluster, you need to run a container as follows:
+
+```
+docker run --rm -v "$HOME/.minikube:$HOME/.minikube" -v "$HOME/.kube:/$HOME/.kube" -e KUBECONFIG="$HOME/.kube/config" ghcr.io/stern/stern .
+```
+
+You can find image tags in https://github.com/orgs/stern/packages/container/package/stern.
+
+## Running in Kubernetes Pods
+
+If you want to use stern in Kubernetes Pods, you need to create the following ClusterRole and bind it to ServiceAccount.
+
+```yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: stern
+rules:
+- apiGroups: [""]
+  resources: ["pods", "pods/log"]
+  verbs: ["get", "watch", "list"]
+```
+
 ## Contributing to this repository
 
-Oracle welcomes contributions to this repository from anyone.  Please see
-[CONTRIBUTING](CONTRIBUTING.md) for details.
+Please see [CONTRIBUTING](CONTRIBUTING.md) for details.

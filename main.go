@@ -15,11 +15,23 @@
 package main
 
 import (
+	"log"
+	"os"
+
 	"github.com/tillberg/autorestart"
 	"github.com/tillberg/stern/cmd"
+	"k8s.io/cli-runtime/pkg/genericclioptions"
 )
 
 func main() {
 	go autorestart.RestartOnChange()
-	cmd.Run()
+	streams := genericclioptions.IOStreams{Out: os.Stdout, ErrOut: os.Stderr}
+	stern, err := cmd.NewSternCmd(streams)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	if err := stern.Execute(); err != nil {
+		os.Exit(1)
+	}
 }
