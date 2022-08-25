@@ -246,16 +246,17 @@ const (
 	jsonValueTypeArrayMore
 )
 
+var dateFormatStr = alog.Colorify(" @(dim:%s)")
 var fieldNameFormatStr = alog.Colorify(" @(cyan,bold:%s)@(dim::)")
 
 func reformatJSON(msg string) string {
-	var depth int
 	var timeStr string
 	var nestedMsg bytes.Buffer
 	var newMsg bytes.Buffer
 	var nextValueTypes []jsonValueType
 	var currentTopLevelKey string
 	d := json.NewDecoder(strings.NewReader(msg))
+	d.UseNumber()
 	for {
 		token, err := d.Token()
 		if err != nil {
@@ -270,40 +271,39 @@ func reformatJSON(msg string) string {
 			nestedMsg.WriteRune(rune(t))
 			switch t {
 			case '[':
-				depth++
 				nextValueTypes = append(nextValueTypes, jsonValueTypeArrayFirst)
 			case ']':
-				depth--
 				nextValueTypes = nextValueTypes[:len(nextValueTypes)-1]
 			case '{':
-				depth++
 				nextValueTypes = append(nextValueTypes, jsonValueTypeMapKey)
 			case '}':
-				depth--
 				nextValueTypes = nextValueTypes[:len(nextValueTypes)-1]
 			}
-			if (t == ']' || t == '}') && depth == 1 {
+			if (t == ']' || t == '}') && len(nextValueTypes) == 1 {
 				newMsg.Write(nestedMsg.Bytes())
 				nestedMsg.Reset()
 			}
 			continue
 		}
+		if len(nextValueTypes) < 1 {
+			return msg
+		}
 		var nextValueType = nextValueTypes[len(nextValueTypes)-1]
 		switch t := token.(type) {
 		case bool: // JSON booleans
 			valueStr = strconv.FormatBool(t)
-		case float64: // JSON numbers
-			valueStr = strconv.FormatFloat(t, 'g', -1, 64)
 		case json.Number: // JSON numbers
 			valueStr = t.String()
 		case string: // JSON string literals
 			valueStr = t
 		case nil: // JSON null
 			valueStr = "null"
+		default:
+			return msg
 		}
 		switch nextValueType {
 		case jsonValueTypeMapKey:
-			if depth == 1 {
+			if len(nextValueTypes) == 1 {
 				currentTopLevelKey = valueStr
 			}
 			if currentTopLevelKey != "time" {
@@ -316,7 +316,7 @@ func reformatJSON(msg string) string {
 				if unixTimeSecs, err := strconv.ParseInt(valueStr, 10, 64); err == nil {
 					valueStr = time.Unix(unixTimeSecs, 0).Format("2006-01-02T15:04:05Z")
 				}
-				timeStr = " " + valueStr
+				timeStr = fmt.Sprintf(dateFormatStr, valueStr)
 			} else {
 				fmt.Fprintf(&newMsg, " %s", valueStr)
 			}
