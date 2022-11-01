@@ -263,7 +263,7 @@ func reformatJSON(msg string) string {
 			if err == io.EOF {
 				return strings.TrimSpace(timeStr + newMsg.String())
 			}
-			alog.Printf("error decoding json: %v\n", err)
+			// alog.Printf("error decoding json: %v\n", err)
 			return msg
 		}
 		var valueStr string
