@@ -98,6 +98,10 @@ func (o *options) Validate() error {
 }
 
 func (o *options) Run(cmd *cobra.Command) error {
+	if o.container == ".*" && o.excludeContainer == "" {
+		o.excludeContainer = "istio-proxy"
+	}
+
 	config, err := o.sternConfig()
 	if err != nil {
 		return err
